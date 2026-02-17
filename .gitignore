@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.context/
+.env.local
+.env
+example/convex/_generated/
+src/component/_generated/
+*.tgz
