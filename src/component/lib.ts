@@ -2326,11 +2326,11 @@ export const getProfileByEmail = query({
       .withIndex("by_email", (q) => q.eq("email", args.email))
       .first();
     if (!profile) return null;
-    return { _id: profile._id, userId: profile.userId, email: profile.email };
+    return { _id: profile._id as string, userId: profile.userId, email: profile.email };
   },
 });
 
-export const updateProfileUserId = mutation({
+export const updateProfileUserId = internalMutation({
   args: {
     oldUserId: v.string(),
     newUserId: v.string(),
@@ -2355,15 +2355,22 @@ export const updateProfileUserId = mutation({
       await ctx.db.patch(m._id, { userId: args.newUserId });
     }
 
-    // 3-4. Update invitations (invitedBy and acceptedBy)
-    const allInvitations = await ctx.db.query("invitations").collect();
-    for (const inv of allInvitations) {
-      const patch: Record<string, string> = {};
-      if (inv.invitedBy === args.oldUserId) patch.invitedBy = args.newUserId;
-      if (inv.acceptedBy === args.oldUserId) patch.acceptedBy = args.newUserId;
-      if (Object.keys(patch).length > 0) {
-        await ctx.db.patch(inv._id, patch);
-      }
+    // 3. Update invitations.invitedBy
+    const invitedByInvitations = await ctx.db
+      .query("invitations")
+      .withIndex("by_invitedBy", (q) => q.eq("invitedBy", args.oldUserId))
+      .collect();
+    for (const inv of invitedByInvitations) {
+      await ctx.db.patch(inv._id, { invitedBy: args.newUserId });
+    }
+
+    // 4. Update invitations.acceptedBy
+    const acceptedByInvitations = await ctx.db
+      .query("invitations")
+      .withIndex("by_acceptedBy", (q) => q.eq("acceptedBy", args.oldUserId))
+      .collect();
+    for (const inv of acceptedByInvitations) {
+      await ctx.db.patch(inv._id, { acceptedBy: args.newUserId });
     }
 
     // 5-6. Update auditLogs
@@ -2374,12 +2381,13 @@ export const updateProfileUserId = mutation({
     for (const log of actorLogs) {
       await ctx.db.patch(log._id, { actorUserId: args.newUserId });
     }
-    // effectiveUserId has no index, but is rarely used
-    const allLogs = await ctx.db.query("auditLogs").collect();
-    for (const log of allLogs) {
-      if (log.effectiveUserId === args.oldUserId) {
-        await ctx.db.patch(log._id, { effectiveUserId: args.newUserId });
-      }
+    // 6. Update auditLogs.effectiveUserId
+    const effectiveLogs = await ctx.db
+      .query("auditLogs")
+      .withIndex("by_effectiveUserId", (q) => q.eq("effectiveUserId", args.oldUserId))
+      .collect();
+    for (const log of effectiveLogs) {
+      await ctx.db.patch(log._id, { effectiveUserId: args.newUserId });
     }
 
     // 7. Update organizations.createdBy
