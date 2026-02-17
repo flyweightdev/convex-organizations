@@ -2307,6 +2307,95 @@ export const transferOwnership = mutation({
 });
 
 // ============================================================================
+// MIGRATION HELPERS
+// ============================================================================
+
+export const getProfileByEmail = query({
+  args: { email: v.string() },
+  returns: v.union(
+    v.object({
+      _id: v.string(),
+      userId: v.string(),
+      email: v.optional(v.string()),
+    }),
+    v.null(),
+  ),
+  handler: async (ctx, args) => {
+    const profile = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_email", (q) => q.eq("email", args.email))
+      .first();
+    if (!profile) return null;
+    return { _id: profile._id, userId: profile.userId, email: profile.email };
+  },
+});
+
+export const updateProfileUserId = mutation({
+  args: {
+    oldUserId: v.string(),
+    newUserId: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    // 1. Update userProfiles
+    const profile = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_userId", (q) => q.eq("userId", args.oldUserId))
+      .unique();
+    if (profile) {
+      await ctx.db.patch(profile._id, { userId: args.newUserId });
+    }
+
+    // 2. Update orgMembers
+    const memberships = await ctx.db
+      .query("orgMembers")
+      .withIndex("by_user", (q) => q.eq("userId", args.oldUserId))
+      .collect();
+    for (const m of memberships) {
+      await ctx.db.patch(m._id, { userId: args.newUserId });
+    }
+
+    // 3-4. Update invitations (invitedBy and acceptedBy)
+    const allInvitations = await ctx.db.query("invitations").collect();
+    for (const inv of allInvitations) {
+      const patch: Record<string, string> = {};
+      if (inv.invitedBy === args.oldUserId) patch.invitedBy = args.newUserId;
+      if (inv.acceptedBy === args.oldUserId) patch.acceptedBy = args.newUserId;
+      if (Object.keys(patch).length > 0) {
+        await ctx.db.patch(inv._id, patch);
+      }
+    }
+
+    // 5-6. Update auditLogs
+    const actorLogs = await ctx.db
+      .query("auditLogs")
+      .withIndex("by_actor", (q) => q.eq("actorUserId", args.oldUserId))
+      .collect();
+    for (const log of actorLogs) {
+      await ctx.db.patch(log._id, { actorUserId: args.newUserId });
+    }
+    // effectiveUserId has no index, but is rarely used
+    const allLogs = await ctx.db.query("auditLogs").collect();
+    for (const log of allLogs) {
+      if (log.effectiveUserId === args.oldUserId) {
+        await ctx.db.patch(log._id, { effectiveUserId: args.newUserId });
+      }
+    }
+
+    // 7. Update organizations.createdBy
+    const orgs = await ctx.db
+      .query("organizations")
+      .withIndex("by_createdBy", (q) => q.eq("createdBy", args.oldUserId))
+      .collect();
+    for (const org of orgs) {
+      await ctx.db.patch(org._id, { createdBy: args.newUserId });
+    }
+
+    return null;
+  },
+});
+
+// ============================================================================
 // SCHEDULED TASKS (crons)
 // ============================================================================
 
