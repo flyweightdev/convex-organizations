@@ -50,6 +50,7 @@ export interface UserOrgConfig {
 
 export interface AuthCallbacksConfig {
   parseDeviceInfo?: boolean;
+  migrationLinking?: boolean;
 }
 
 // --- Expand helper (makes complex types readable) ---
