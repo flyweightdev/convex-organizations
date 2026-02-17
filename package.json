@@ -3,6 +3,23 @@
   "version": "0.1.0",
   "description": "Convex component for organizations, RBAC, invitations, user profiles, device management, audit logging, and admin impersonation",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flyweightdev/convex-organizations.git"
+  },
+  "homepage": "https://github.com/flyweightdev/convex-organizations#readme",
+  "bugs": {
+    "url": "https://github.com/flyweightdev/convex-organizations/issues"
+  },
+  "keywords": [
+    "convex",
+    "organizations",
+    "rbac",
+    "multi-tenancy",
+    "invitations",
+    "audit-logging",
+    "user-management"
+  ],
   "type": "module",
   "files": [
     "dist",
