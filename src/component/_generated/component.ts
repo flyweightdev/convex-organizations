@@ -561,7 +561,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       syncUser: FunctionReference<
         "mutation",
         "internal",
-        { email?: string; name?: string; phone?: string; userId: string },
+        {
+          email?: string;
+          migrationLinking?: boolean;
+          name?: string;
+          phone?: string;
+          userId: string;
+        },
         string,
         Name
       >;
