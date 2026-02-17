@@ -1,6 +1,6 @@
 {
   "name": "@flyweightdev/convex-organizations",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Convex component for organizations, RBAC, invitations, user profiles, device management, audit logging, and admin impersonation",
   "license": "Apache-2.0",
   "repository": {
@@ -62,6 +62,7 @@
     "build": "tsc --project ./tsconfig.build.json",
     "build:codegen": "npx convex codegen --component-dir ./src/component && npm run build",
     "build:clean": "rm -rf dist *.tsbuildinfo && npm run build:codegen",
+    "prepublishOnly": "npm run build:clean",
     "predev": "path-exists .env.local dist || (npm run build && convex dev --once)",
     "dev": "run-p -r 'dev:*'",
     "dev:backend": "convex dev --typecheck-components",
