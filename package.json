@@ -1,6 +1,6 @@
 {
   "name": "@flyweightdev/convex-organizations",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Convex component for organizations, RBAC, invitations, user profiles, device management, audit logging, and admin impersonation",
   "license": "Apache-2.0",
   "repository": {

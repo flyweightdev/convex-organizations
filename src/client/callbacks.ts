@@ -81,31 +81,12 @@ export function createAuthCallbacks(
       const userId = args.existingUserId ?? args.userId;
       const email = args.profile?.email;
 
-      // Migration linking: if enabled and the user has an email,
-      // check if a component profile exists with a temp userId (the email itself).
-      // If so, remap it to the real Convex Auth userId before syncing.
-      if (config.migrationLinking && email) {
-        const existingProfile = await ctx.runQuery(
-          component.lib.getProfileByEmail,
-          { email },
-        );
-        if (
-          existingProfile &&
-          existingProfile.userId !== userId &&
-          existingProfile.userId === email
-        ) {
-          await ctx.runMutation(
-            component.lib.updateProfileUserId,
-            { oldUserId: email, newUserId: userId },
-          );
-        }
-      }
-
       await ctx.runMutation(component.lib.syncUser, {
         userId,
         email,
         phone: args.profile?.phone,
         name: args.profile?.name,
+        ...(config.migrationLinking && { migrationLinking: true }),
       });
     },
 

@@ -1,4 +1,4 @@
-import { query, mutation, internalMutation, internalQuery } from "./_generated/server.js";
+import { query, mutation, internalMutation } from "./_generated/server.js";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel.js";
 import {
@@ -17,8 +17,6 @@ import {
 } from "./helpers.js";
 
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-const MIGRATION_PAGE_SIZE = 200;
-
 // ============================================================================
 // USER PROFILES
 // ============================================================================
@@ -29,9 +27,101 @@ export const syncUser = mutation({
     email: v.optional(v.string()),
     phone: v.optional(v.string()),
     name: v.optional(v.string()),
+    migrationLinking: v.optional(v.boolean()),
   },
   returns: v.string(),
   handler: async (ctx, args) => {
+    // Migration linking: before syncing, check if a profile exists for this
+    // email with a temp userId (the email itself from pre-migration seeding).
+    // If so, remap it to the real Convex Auth userId.
+    if (args.migrationLinking && args.email) {
+      const existingProfiles = await ctx.db
+        .query("userProfiles")
+        .withIndex("by_email", (q) => q.eq("email", args.email))
+        .take(3);
+      const activeProfile = existingProfiles.find((p) => p.deletedAt === undefined);
+
+      if (
+        activeProfile &&
+        activeProfile.userId !== args.userId &&
+        activeProfile.userId === args.email
+      ) {
+        // Remap the temp userId to the real one across all tables.
+        // Check no profile already exists for the real userId
+        const realProfile = await ctx.db
+          .query("userProfiles")
+          .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+          .unique();
+        if (!realProfile) {
+          // 1. Update profile
+          await ctx.db.patch(activeProfile._id, { userId: args.userId });
+
+          // 2. Update orgMembers.userId
+          const members = await ctx.db
+            .query("orgMembers")
+            .withIndex("by_user", (q) => q.eq("userId", args.email!))
+            .collect();
+          for (const m of members) {
+            await ctx.db.patch(m._id, { userId: args.userId });
+          }
+
+          // 3. Update orgMembers.invitedBy
+          const invitedByMembers = await ctx.db
+            .query("orgMembers")
+            .withIndex("by_invitedBy", (q) => q.eq("invitedBy", args.email!))
+            .collect();
+          for (const m of invitedByMembers) {
+            await ctx.db.patch(m._id, { invitedBy: args.userId });
+          }
+
+          // 4. Update invitations.invitedBy
+          const invitedByInvs = await ctx.db
+            .query("invitations")
+            .withIndex("by_invitedBy", (q) => q.eq("invitedBy", args.email!))
+            .collect();
+          for (const inv of invitedByInvs) {
+            await ctx.db.patch(inv._id, { invitedBy: args.userId });
+          }
+
+          // 5. Update invitations.acceptedBy
+          const acceptedByInvs = await ctx.db
+            .query("invitations")
+            .withIndex("by_acceptedBy", (q) => q.eq("acceptedBy", args.email!))
+            .collect();
+          for (const inv of acceptedByInvs) {
+            await ctx.db.patch(inv._id, { acceptedBy: args.userId });
+          }
+
+          // 6. Update auditLogs.actorUserId
+          const actorLogs = await ctx.db
+            .query("auditLogs")
+            .withIndex("by_actor", (q) => q.eq("actorUserId", args.email!))
+            .collect();
+          for (const log of actorLogs) {
+            await ctx.db.patch(log._id, { actorUserId: args.userId });
+          }
+
+          // 7. Update auditLogs.effectiveUserId
+          const effectiveLogs = await ctx.db
+            .query("auditLogs")
+            .withIndex("by_effectiveUserId", (q) => q.eq("effectiveUserId", args.email!))
+            .collect();
+          for (const log of effectiveLogs) {
+            await ctx.db.patch(log._id, { effectiveUserId: args.userId });
+          }
+
+          // 8. Update organizations.createdBy
+          const orgs = await ctx.db
+            .query("organizations")
+            .withIndex("by_createdBy", (q) => q.eq("createdBy", args.email!))
+            .collect();
+          for (const org of orgs) {
+            await ctx.db.patch(org._id, { createdBy: args.userId });
+          }
+        }
+      }
+    }
+
     const existing = await ctx.db
       .query("userProfiles")
       .withIndex("by_userId", (q) => q.eq("userId", args.userId))
@@ -2303,242 +2393,6 @@ export const transferOwnership = mutation({
         previousOwners: currentOwners.map((o) => o.userId),
       },
     });
-    return null;
-  },
-});
-
-// ============================================================================
-// MIGRATION HELPERS
-// ============================================================================
-
-export const getProfileByEmail = internalQuery({
-  args: { email: v.string() },
-  returns: v.union(
-    v.object({
-      _id: v.string(),
-      userId: v.string(),
-      email: v.optional(v.string()),
-    }),
-    v.null(),
-  ),
-  handler: async (ctx, args) => {
-    const profiles = await ctx.db
-      .query("userProfiles")
-      .withIndex("by_email", (q) => q.eq("email", args.email))
-      .take(3);
-
-    const activeProfiles = profiles.filter((profile) => profile.deletedAt === undefined);
-    if (activeProfiles.length > 1) {
-      throw new Error(`Multiple active profiles found for email: ${args.email}`);
-    }
-
-    const profile = activeProfiles[0];
-    if (!profile) return null;
-    return { _id: profile._id as string, userId: profile.userId, email: profile.email };
-  },
-});
-
-export const updateProfileUserId = internalMutation({
-  args: {
-    oldUserId: v.string(),
-    newUserId: v.string(),
-  },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    if (args.oldUserId === args.newUserId) {
-      return null;
-    }
-
-    // Preflight: avoid duplicate profile rows for by_userId.
-    const oldProfile = await ctx.db
-      .query("userProfiles")
-      .withIndex("by_userId", (q) => q.eq("userId", args.oldUserId))
-      .unique();
-    const newProfile = await ctx.db
-      .query("userProfiles")
-      .withIndex("by_userId", (q) => q.eq("userId", args.newUserId))
-      .unique();
-    if (oldProfile && newProfile) {
-      throw new Error(
-        `Cannot migrate userId: target userId already has a profile (${args.newUserId})`,
-      );
-    }
-
-    // Preflight: avoid duplicate memberships for by_org_user.
-    const newMemberships = await ctx.db
-      .query("orgMembers")
-      .withIndex("by_user", (q) => q.eq("userId", args.newUserId))
-      .collect();
-    if (newMemberships.length > 0) {
-      const newOrgIds = new Set(newMemberships.map((member) => member.orgId as string));
-      const conflictingOrgIds = new Set<string>();
-      let membershipCursor: string | null = null;
-
-      while (true) {
-        const page = await ctx.db
-          .query("orgMembers")
-          .withIndex("by_user", (q) => q.eq("userId", args.oldUserId))
-          .paginate({
-            numItems: MIGRATION_PAGE_SIZE,
-            cursor: membershipCursor,
-          });
-
-        for (const member of page.page) {
-          const orgId = member.orgId as string;
-          if (newOrgIds.has(orgId)) {
-            conflictingOrgIds.add(orgId);
-          }
-        }
-
-        if (page.isDone) break;
-        membershipCursor = page.continueCursor;
-      }
-
-      if (conflictingOrgIds.size > 0) {
-        throw new Error(
-          `Cannot migrate userId: target userId already has memberships in orgs: ${Array.from(conflictingOrgIds).join(", ")}`,
-        );
-      }
-    }
-
-    // 1. Update userProfiles.userId
-    if (oldProfile) {
-      await ctx.db.patch(oldProfile._id, { userId: args.newUserId });
-    }
-
-    // 2. Update orgMembers.userId
-    let membershipsCursor: string | null = null;
-    while (true) {
-      const page = await ctx.db
-        .query("orgMembers")
-        .withIndex("by_user", (q) => q.eq("userId", args.oldUserId))
-        .paginate({
-          numItems: MIGRATION_PAGE_SIZE,
-          cursor: membershipsCursor,
-        });
-
-      for (const member of page.page) {
-        await ctx.db.patch(member._id, { userId: args.newUserId });
-      }
-
-      if (page.isDone) break;
-      membershipsCursor = page.continueCursor;
-    }
-
-    // 3. Update orgMembers.invitedBy
-    let memberInvitedByCursor: string | null = null;
-    while (true) {
-      const page = await ctx.db
-        .query("orgMembers")
-        .withIndex("by_invitedBy", (q) => q.eq("invitedBy", args.oldUserId))
-        .paginate({
-          numItems: MIGRATION_PAGE_SIZE,
-          cursor: memberInvitedByCursor,
-        });
-
-      for (const member of page.page) {
-        await ctx.db.patch(member._id, { invitedBy: args.newUserId });
-      }
-
-      if (page.isDone) break;
-      memberInvitedByCursor = page.continueCursor;
-    }
-
-    // 4. Update invitations.invitedBy
-    let invitedByCursor: string | null = null;
-    while (true) {
-      const page = await ctx.db
-        .query("invitations")
-        .withIndex("by_invitedBy", (q) => q.eq("invitedBy", args.oldUserId))
-        .paginate({
-          numItems: MIGRATION_PAGE_SIZE,
-          cursor: invitedByCursor,
-        });
-
-      for (const invitation of page.page) {
-        await ctx.db.patch(invitation._id, { invitedBy: args.newUserId });
-      }
-
-      if (page.isDone) break;
-      invitedByCursor = page.continueCursor;
-    }
-
-    // 5. Update invitations.acceptedBy
-    let acceptedByCursor: string | null = null;
-    while (true) {
-      const page = await ctx.db
-        .query("invitations")
-        .withIndex("by_acceptedBy", (q) => q.eq("acceptedBy", args.oldUserId))
-        .paginate({
-          numItems: MIGRATION_PAGE_SIZE,
-          cursor: acceptedByCursor,
-        });
-
-      for (const invitation of page.page) {
-        await ctx.db.patch(invitation._id, { acceptedBy: args.newUserId });
-      }
-
-      if (page.isDone) break;
-      acceptedByCursor = page.continueCursor;
-    }
-
-    // 6. Update auditLogs.actorUserId
-    let actorLogsCursor: string | null = null;
-    while (true) {
-      const page = await ctx.db
-        .query("auditLogs")
-        .withIndex("by_actor", (q) => q.eq("actorUserId", args.oldUserId))
-        .paginate({
-          numItems: MIGRATION_PAGE_SIZE,
-          cursor: actorLogsCursor,
-        });
-
-      for (const log of page.page) {
-        await ctx.db.patch(log._id, { actorUserId: args.newUserId });
-      }
-
-      if (page.isDone) break;
-      actorLogsCursor = page.continueCursor;
-    }
-
-    // 7. Update auditLogs.effectiveUserId
-    let effectiveLogsCursor: string | null = null;
-    while (true) {
-      const page = await ctx.db
-        .query("auditLogs")
-        .withIndex("by_effectiveUserId", (q) => q.eq("effectiveUserId", args.oldUserId))
-        .paginate({
-          numItems: MIGRATION_PAGE_SIZE,
-          cursor: effectiveLogsCursor,
-        });
-
-      for (const log of page.page) {
-        await ctx.db.patch(log._id, { effectiveUserId: args.newUserId });
-      }
-
-      if (page.isDone) break;
-      effectiveLogsCursor = page.continueCursor;
-    }
-
-    // 8. Update organizations.createdBy
-    let orgsCursor: string | null = null;
-    while (true) {
-      const page = await ctx.db
-        .query("organizations")
-        .withIndex("by_createdBy", (q) => q.eq("createdBy", args.oldUserId))
-        .paginate({
-          numItems: MIGRATION_PAGE_SIZE,
-          cursor: orgsCursor,
-        });
-
-      for (const org of page.page) {
-        await ctx.db.patch(org._id, { createdBy: args.newUserId });
-      }
-
-      if (page.isDone) break;
-      orgsCursor = page.continueCursor;
-    }
-
     return null;
   },
 });
