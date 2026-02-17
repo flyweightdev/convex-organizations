@@ -13,7 +13,8 @@ export function createAdminAPI(
   async function getAuthUserId(ctx: any): Promise<string> {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated");
-    return identity.subject;
+    const [userId] = identity.subject.split("|");
+    return userId;
   }
 
   return {
