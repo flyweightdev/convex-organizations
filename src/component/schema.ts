@@ -41,6 +41,7 @@ export default defineSchema({
   })
     .index("by_org", ["orgId"])
     .index("by_user", ["userId"])
+    .index("by_invitedBy", ["invitedBy"])
     .index("by_org_user", ["orgId", "userId"])
     .index("by_org_role", ["orgId", "roleId"]),
 
@@ -69,7 +70,9 @@ export default defineSchema({
     .index("by_org_status", ["orgId", "status"])
     .index("by_org_email_status", ["orgId", "email", "status"])
     .index("by_org_phone_status", ["orgId", "phone", "status"])
-    .index("by_org_roleId", ["orgId", "roleId"]),
+    .index("by_org_roleId", ["orgId", "roleId"])
+    .index("by_invitedBy", ["invitedBy"])
+    .index("by_acceptedBy", ["acceptedBy"]),
 
   userProfiles: defineTable({
     userId: v.string(),
@@ -145,5 +148,6 @@ export default defineSchema({
     .index("by_resource", ["resourceType", "resourceId"])
     .index("by_action", ["action", "timestamp"])
     .index("by_org_and_action", ["orgId", "action", "timestamp"])
-    .index("by_org_and_actor", ["orgId", "actorUserId", "timestamp"]),
+    .index("by_org_and_actor", ["orgId", "actorUserId", "timestamp"])
+    .index("by_effectiveUserId", ["effectiveUserId"]),
 });
