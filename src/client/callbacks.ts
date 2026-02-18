@@ -4,7 +4,7 @@ import type { AuthCallbacksConfig } from "./types.js";
  * Parses a user-agent string into device info.
  * Lightweight parser — covers major browsers and OSes.
  */
-function parseUserAgent(ua: string): {
+export function parseUserAgent(ua: string): {
   deviceName?: string;
   deviceType?: "web" | "mobile" | "tablet" | "desktop";
   browser?: string;

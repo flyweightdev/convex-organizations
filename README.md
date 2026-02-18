@@ -91,7 +91,41 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
 });
 ```
 
-The callbacks automatically sync user profiles, register devices on login, and auto-accept pending invitations when a user signs up.
+The callbacks automatically sync user profiles and auto-accept pending invitations when a user signs up.
+
+> **Note:** The `afterSessionCreated` callback is exported but **not called** by Convex Auth — Convex Auth only supports the `afterUserCreatedOrUpdated` and `redirect` callbacks. Device registration must be done from the client. See [Device Management](#device-management) below for the setup.
+
+If you need custom logic in `afterUserCreatedOrUpdated` (e.g. casting profile fields, handling migration), wrap the base callbacks:
+
+```typescript
+import { convexAuth } from "@convex-dev/auth/server";
+import { ResendOTP } from "@flyweightdev/convex-organizations/providers";
+import { createAuthCallbacks } from "@flyweightdev/convex-organizations";
+import { components } from "./_generated/api";
+
+const baseCallbacks = createAuthCallbacks(components.userOrg, {
+  parseDeviceInfo: true,
+  migrationLinking: true,
+});
+
+export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
+  providers: [ResendOTP({ appName: "MyApp", fromEmail: "noreply@yourdomain.com" })],
+  callbacks: {
+    async afterUserCreatedOrUpdated(ctx, args) {
+      await baseCallbacks.afterUserCreatedOrUpdated(ctx, {
+        userId: args.userId,
+        existingUserId: args.existingUserId ?? undefined,
+        profile: {
+          email: args.profile?.email as string | undefined,
+          phone: args.profile?.phone as string | undefined,
+          name: args.profile?.name as string | undefined,
+        },
+      });
+      // Your custom logic here
+    },
+  },
+});
+```
 
 ### 4. Export the User/Org API
 
@@ -153,7 +187,72 @@ export default defineSchema({
 });
 ```
 
-### 8. Add the React Provider
+> **Tip:** Convex Auth writes fields like `emailVerificationTime`, `phoneVerificationTime`, and `isAnonymous` to the `users` table. If your app has a `getCurrentUser` query with a `returns` validator, include **all** auth-managed fields or it will throw a `ReturnsValidationError`:
+>
+> ```typescript
+> const userValidator = v.object({
+>   _id: v.id("users"),
+>   _creationTime: v.number(),
+>   name: v.optional(v.string()),
+>   email: v.optional(v.string()),
+>   emailVerificationTime: v.optional(v.number()),
+>   phone: v.optional(v.string()),
+>   phoneVerificationTime: v.optional(v.number()),
+>   isAnonymous: v.optional(v.boolean()),
+>   // your app-specific fields...
+> });
+> ```
+
+### 8. Add the Auth and Org Providers
+
+#### Next.js
+
+> **Important:** Do **not** use `ConvexAuthProvider` from `@convex-dev/auth/react` in Next.js apps that use middleware auth protection (e.g. `convexAuthNextjsMiddleware`). That provider stores tokens only in localStorage, so `isAuthenticated()` in middleware always returns `false`, causing an infinite redirect loop after login.
+
+Use the Next.js-specific providers from `@convex-dev/auth/nextjs`:
+
+```tsx
+// app/layout.tsx (server component)
+import { ConvexAuthNextjsServerProvider } from "@convex-dev/auth/nextjs/server";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html>
+      <body>
+        <ConvexAuthNextjsServerProvider>
+          {children}
+        </ConvexAuthNextjsServerProvider>
+      </body>
+    </html>
+  );
+}
+```
+
+```tsx
+// app/providers.tsx (client component)
+"use client";
+
+import { ConvexAuthNextjsProvider } from "@convex-dev/auth/nextjs";
+import { ConvexReactClient } from "convex/react";
+import { UserOrgProvider } from "@flyweightdev/convex-organizations/react";
+import { api } from "../convex/_generated/api";
+
+const convex = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
+
+export default function Providers({ children }: { children: React.ReactNode }) {
+  return (
+    <ConvexAuthNextjsProvider client={convex}>
+      <UserOrgProvider
+        api={api.userOrg}
+        adminApi={api.admin}>
+        {children}
+      </UserOrgProvider>
+    </ConvexAuthNextjsProvider>
+  );
+}
+```
+
+#### React (Vite, CRA, etc.)
 
 ```tsx
 "use client";
@@ -314,7 +413,57 @@ Invitations have a configurable expiry (default 7 days) and can be revoked by or
 
 ## Device Management
 
-Devices are automatically registered when users sign in. The component parses the user-agent string to extract browser, OS, and device type.
+Devices must be registered from the client because Convex Auth does not call `afterSessionCreated`. The library exports `parseUserAgent` to help with user-agent parsing.
+
+### Registering Devices
+
+Create a backend mutation to register the current device:
+
+```typescript
+// convex/devices.ts
+import { mutation } from "./_generated/server";
+import { v } from "convex/values";
+import { parseUserAgent } from "@flyweightdev/convex-organizations";
+import { components } from "./_generated/api";
+
+export const registerDevice = mutation({
+  args: { userAgent: v.optional(v.string()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const [userId, sessionId] = identity.subject.split("|");
+    if (!userId || !sessionId) return null;
+
+    const deviceInfo = args.userAgent ? parseUserAgent(args.userAgent) : {};
+
+    await ctx.runMutation(components.userOrg.lib.registerDevice, {
+      userId,
+      sessionId,
+      ...deviceInfo,
+    });
+    return null;
+  },
+});
+```
+
+Call it once on app load from the client:
+
+```tsx
+import { useMutation } from "convex/react";
+import { api } from "../convex/_generated/api";
+
+const registerDevice = useMutation(api.devices.registerDevice);
+const deviceRegistered = useRef(false);
+
+useEffect(() => {
+  if (deviceRegistered.current || !currentUser) return;
+  deviceRegistered.current = true;
+  registerDevice({ userAgent: navigator.userAgent }).catch(() => {});
+}, [currentUser, registerDevice]);
+```
+
+### Viewing and Revoking Devices
 
 ```typescript
 const { devices, currentDevice } = useDevices();
@@ -682,9 +831,10 @@ The component creates these tables in its own isolated namespace (separate from 
 
 ### `createAuthCallbacks(component, config)`
 
-| Option            | Type      | Default | Description                                |
-| ----------------- | --------- | ------- | ------------------------------------------ |
-| `parseDeviceInfo` | `boolean` | `false` | Parse user-agent into device info on login |
+| Option             | Type      | Default | Description                                                       |
+| ------------------ | --------- | ------- | ----------------------------------------------------------------- |
+| `parseDeviceInfo`  | `boolean` | `false` | Parse user-agent into device info (used with client-side registration) |
+| `migrationLinking` | `boolean` | `false` | Remap temporary userId to real userId (for Clerk → Convex Auth migration) |
 
 ## Host App File Structure
 
@@ -702,6 +852,77 @@ convex/
 ```
 
 No subdirectories. No polyfills. No adapters. No CLI schema generation.
+
+## Common Patterns
+
+### Convex Auth `identity.subject` Encoding
+
+Convex Auth encodes `identity.subject` as `"userId|sessionId"`. This library splits on `|` internally (fixed in v0.1.8). If you write custom queries against the component's internal tables, always split the subject:
+
+```typescript
+const identity = await ctx.auth.getUserIdentity();
+const [userId, sessionId] = identity.subject.split("|");
+```
+
+> **Minimum required version:** v0.1.8. Earlier versions used the raw `identity.subject` as the userId, which caused membership lookups to fail.
+
+### Getting the Current Session ID
+
+To identify "this device" in a device list or for session-specific logic, extract the session ID from `identity.subject`:
+
+```typescript
+// convex/sessions.ts
+import { query } from "./_generated/server";
+import { v } from "convex/values";
+
+export const getCurrentSessionId = query({
+  args: {},
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    return identity.subject.split("|")[1] ?? null;
+  },
+});
+```
+
+### Checking Workspace/Org Membership in Your Own Functions
+
+The README shows how to create orgs and list members, but your app likely needs to gate access in its own queries and mutations. Use the component's internal query to check membership:
+
+```typescript
+// convex/helpers.ts
+import { components } from "./_generated/api";
+
+export async function requireOrgAccess(
+  ctx: any,
+  orgId: string,
+): Promise<{ userId: string; role: string }> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new Error("Not authenticated");
+  const [userId] = identity.subject.split("|");
+
+  const membership = await ctx.runQuery(
+    components.userOrg.lib.getMembershipQuery,
+    { userId, orgId },
+  );
+  if (!membership) throw new Error("Not a member of this organization");
+  return { userId, role: membership.role.name };
+}
+```
+
+### Syncing Profile Updates to the Component
+
+When users update their name or other profile fields in your host app, sync the changes to the component so the member list stays current:
+
+```typescript
+// After patching the user record in your app:
+await ctx.runMutation(components.userOrg.lib.syncUser, {
+  userId,
+  email: user.email,
+  name: user.name,
+});
+```
 
 ## Authentication
 
