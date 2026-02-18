@@ -18,6 +18,7 @@ export {
   useRevokeInvitation,
   useAcceptInvitation,
   useDeclineInvitation,
+  useCurrentSessionId,
   useDevices,
   useRemoveDevice,
   useRemoveAllOtherDevices,

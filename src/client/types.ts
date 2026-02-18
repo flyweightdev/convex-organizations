@@ -49,6 +49,15 @@ export interface UserOrgConfig {
 // --- Auth callback configuration ---
 
 export interface AuthCallbacksConfig {
+  /**
+   * Enable user-agent parsing for device registration.
+   *
+   * **Warning:** This only takes effect if your auth provider calls
+   * `afterSessionCreated`. Convex Auth does **not** call this callback —
+   * it only supports `afterUserCreatedOrUpdated` and `redirect`. If you
+   * use Convex Auth, use the `registerDevice` mutation from `createUserOrgAPI()`
+   * instead (call it from the client on app load).
+   */
   parseDeviceInfo?: boolean;
   migrationLinking?: boolean;
 }

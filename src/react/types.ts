@@ -25,6 +25,8 @@ export interface UserOrgApi {
   getInvitationByToken: FunctionReference<"query", "public">;
   acceptInvitation: FunctionReference<"mutation", "public">;
   declineInvitation: FunctionReference<"mutation", "public">;
+  getCurrentSessionId: FunctionReference<"query", "public">;
+  registerDevice: FunctionReference<"mutation", "public">;
   listMyDevices: FunctionReference<"query", "public">;
   removeDevice: FunctionReference<"mutation", "public">;
   removeAllOtherDevices: FunctionReference<"mutation", "public">;

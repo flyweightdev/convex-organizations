@@ -189,14 +189,22 @@ export function useDeclineInvitation() {
 // DEVICES
 // ============================================================================
 
+export function useCurrentSessionId() {
+  const { api } = useUserOrgContext();
+  const sessionId = useQuery(api.getCurrentSessionId);
+  return sessionId ?? null;
+}
+
 export function useDevices(currentSessionId?: string) {
   const { api } = useUserOrgContext();
   const devices = useQuery(api.listMyDevices);
+  const autoSessionId = useCurrentSessionId();
+  const resolvedSessionId = currentSessionId ?? autoSessionId;
 
   const currentDevice = useMemo(() => {
-    if (!currentSessionId || !devices) return null;
-    return devices.find((d: any) => d.sessionId === currentSessionId) ?? null;
-  }, [devices, currentSessionId]);
+    if (!resolvedSessionId || !devices) return null;
+    return devices.find((d: any) => d.sessionId === resolvedSessionId) ?? null;
+  }, [devices, resolvedSessionId]);
 
   return {
     devices: devices ?? [],

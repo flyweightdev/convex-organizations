@@ -1,6 +1,7 @@
 import { queryGeneric, mutationGeneric } from "convex/server";
 import { v } from "convex/values";
 import type { UserOrgConfig } from "./types.js";
+import { parseUserAgent } from "./callbacks.js";
 
 /**
  * Creates the user-facing organization API.
@@ -599,6 +600,39 @@ export function createUserOrgAPI(component: any, config: UserOrgConfig) {
     // =====================================================================
     // DEVICES
     // =====================================================================
+
+    getCurrentSessionId: queryGeneric({
+      args: {},
+      returns: v.union(v.string(), v.null()),
+      handler: async (ctx: any) => {
+        const identity = await ctx.auth.getUserIdentity();
+        if (!identity) return null;
+        const parts = identity.subject.split("|");
+        return parts[1] ?? null;
+      },
+    }),
+
+    registerDevice: mutationGeneric({
+      args: { userAgent: v.optional(v.string()) },
+      returns: v.null(),
+      handler: async (ctx: any, args: any) => {
+        const identity = await ctx.auth.getUserIdentity();
+        if (!identity) return null;
+        const parts = identity.subject.split("|");
+        const userId = parts[0];
+        const sessionId = parts[1];
+        if (!userId || !sessionId) return null;
+
+        const deviceInfo = args.userAgent ? parseUserAgent(args.userAgent) : {};
+
+        await ctx.runMutation(component.lib.registerDevice, {
+          userId,
+          sessionId,
+          ...deviceInfo,
+        });
+        return null;
+      },
+    }),
 
     listMyDevices: queryGeneric({
       args: {},

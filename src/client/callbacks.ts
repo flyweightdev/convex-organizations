@@ -93,6 +93,11 @@ export function createAuthCallbacks(
     /**
      * Called when a new session is created.
      * Registers the device if parseDeviceInfo is enabled.
+     *
+     * **Warning:** Convex Auth does NOT call this callback — it only supports
+     * `afterUserCreatedOrUpdated` and `redirect`. This only works if your auth
+     * provider explicitly invokes `afterSessionCreated`. For Convex Auth, use
+     * the `registerDevice` mutation from `createUserOrgAPI()` instead.
      */
     async afterSessionCreated(
       ctx: any,

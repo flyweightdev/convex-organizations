@@ -135,7 +135,7 @@ Create `convex/userOrg.ts`:
 import { createUserOrgAPI } from "@flyweightdev/convex-organizations";
 import { components } from "./_generated/api";
 
-export const { getMyProfile, updateMyProfile, setActiveOrg, createOrg, getOrg, getOrgBySlug, updateOrg, deleteOrg, listMyOrgs, listRoles, createRole, updateRole, deleteRole, listMembers, getMyMembership, updateMemberRole, removeMember, leaveOrg, createInvitation, listInvitations, revokeInvitation, getInvitationByToken, acceptInvitation, declineInvitation, listMyDevices, removeDevice, removeAllOtherDevices, checkPermission, listAuditLogs } = createUserOrgAPI(components.userOrg, {
+export const { getMyProfile, updateMyProfile, setActiveOrg, createOrg, getOrg, getOrgBySlug, updateOrg, deleteOrg, listMyOrgs, listRoles, createRole, updateRole, deleteRole, listMembers, getMyMembership, updateMemberRole, removeMember, leaveOrg, createInvitation, listInvitations, revokeInvitation, getInvitationByToken, acceptInvitation, declineInvitation, getCurrentSessionId, registerDevice, listMyDevices, removeDevice, removeAllOtherDevices, checkPermission, listAuditLogs } = createUserOrgAPI(components.userOrg, {
   roles: [
     { name: "owner", permissions: ["*"], sortOrder: 0, isSystem: true },
     { name: "admin", permissions: ["org:read", "org:write", "member:read", "member:invite", "member:manage", "member:remove", "role:read", "role:manage", "invitation:read", "invitation:manage", "audit:read"], sortOrder: 10, isSystem: true },
@@ -413,54 +413,30 @@ Invitations have a configurable expiry (default 7 days) and can be revoked by or
 
 ## Device Management
 
-Devices must be registered from the client because Convex Auth does not call `afterSessionCreated`. The library exports `parseUserAgent` to help with user-agent parsing.
+> **Note:** Convex Auth does not call `afterSessionCreated`, so the `parseDeviceInfo` option in `createAuthCallbacks` does not automatically register devices. Use the built-in `registerDevice` mutation from the client instead.
 
 ### Registering Devices
 
-Create a backend mutation to register the current device:
-
-```typescript
-// convex/devices.ts
-import { mutation } from "./_generated/server";
-import { v } from "convex/values";
-import { parseUserAgent } from "@flyweightdev/convex-organizations";
-import { components } from "./_generated/api";
-
-export const registerDevice = mutation({
-  args: { userAgent: v.optional(v.string()) },
-  returns: v.null(),
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
-    const [userId, sessionId] = identity.subject.split("|");
-    if (!userId || !sessionId) return null;
-
-    const deviceInfo = args.userAgent ? parseUserAgent(args.userAgent) : {};
-
-    await ctx.runMutation(components.userOrg.lib.registerDevice, {
-      userId,
-      sessionId,
-      ...deviceInfo,
-    });
-    return null;
-  },
-});
-```
+The `registerDevice` mutation is included in `createUserOrgAPI()` output. It extracts the userId and sessionId from the auth identity, parses the user-agent string, and registers the device — no boilerplate needed.
 
 Call it once on app load from the client:
 
 ```tsx
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
+import { useRef, useEffect } from "react";
 import { api } from "../convex/_generated/api";
 
-const registerDevice = useMutation(api.devices.registerDevice);
-const deviceRegistered = useRef(false);
+function useRegisterDevice() {
+  const registerDevice = useMutation(api.userOrg.registerDevice);
+  const profile = useQuery(api.userOrg.getMyProfile);
+  const registered = useRef(false);
 
-useEffect(() => {
-  if (deviceRegistered.current || !currentUser) return;
-  deviceRegistered.current = true;
-  registerDevice({ userAgent: navigator.userAgent }).catch(() => {});
-}, [currentUser, registerDevice]);
+  useEffect(() => {
+    if (registered.current || !profile) return;
+    registered.current = true;
+    registerDevice({ userAgent: navigator.userAgent }).catch(() => {});
+  }, [profile, registerDevice]);
+}
 ```
 
 ### Viewing and Revoking Devices
@@ -696,7 +672,8 @@ All hooks are headless (no UI components) and work on both web and React Native.
 | `useRevokeInvitation()`         | Mutation to revoke an invitation                                                       |
 | `useAcceptInvitation()`         | Mutation to accept an invitation                                                       |
 | `useDeclineInvitation()`        | Mutation to decline an invitation                                                      |
-| `useDevices()`                  | `{ devices, currentDevice, isLoading }`                                                |
+| `useCurrentSessionId()`         | Current session ID (string or null)                                                    |
+| `useDevices()`                  | `{ devices, currentDevice, isLoading }` — `currentDevice` auto-resolved via session ID |
 | `useRemoveDevice()`             | Mutation to revoke a device (returns `sessionId` for host-side invalidation)           |
 | `useRemoveAllOtherDevices()`    | Mutation to revoke all other devices (returns `sessionIds` for host-side invalidation) |
 | `useAuditLogs(orgId, filters?)` | `{ logs, isLoading, loadMore }`                                                        |
@@ -868,22 +845,25 @@ const [userId, sessionId] = identity.subject.split("|");
 
 ### Getting the Current Session ID
 
-To identify "this device" in a device list or for session-specific logic, extract the session ID from `identity.subject`:
+To identify "this device" in the device list, use the built-in `getCurrentSessionId` query (included in `createUserOrgAPI` output):
 
 ```typescript
-// convex/sessions.ts
-import { query } from "./_generated/server";
-import { v } from "convex/values";
+// Already exported from your userOrg.ts:
+// export const { getCurrentSessionId, listMyDevices, ... } = createUserOrgAPI(...);
 
-export const getCurrentSessionId = query({
-  args: {},
-  returns: v.union(v.string(), v.null()),
-  handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
-    return identity.subject.split("|")[1] ?? null;
-  },
-});
+// In your component:
+const currentSessionId = useQuery(api.userOrg.getCurrentSessionId);
+const devices = useQuery(api.userOrg.listMyDevices);
+const currentDevice = devices?.find(d => d.sessionId === currentSessionId);
+```
+
+Or use the `useCurrentSessionId` React hook directly. The `useDevices` hook also auto-resolves the current device — no need to pass `currentSessionId` manually:
+
+```typescript
+import { useDevices, useCurrentSessionId } from "@flyweightdev/convex-organizations/react";
+
+const { devices, currentDevice } = useDevices(); // currentDevice auto-resolved
+const sessionId = useCurrentSessionId(); // if you need the raw ID
 ```
 
 ### Checking Workspace/Org Membership in Your Own Functions
