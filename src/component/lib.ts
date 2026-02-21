@@ -1,4 +1,9 @@
-import { query, mutation, internalMutation } from "./_generated/server.js";
+import {
+  query,
+  mutation,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server.js";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel.js";
 import {
@@ -2394,6 +2399,22 @@ export const transferOwnership = mutation({
       },
     });
     return null;
+  },
+});
+
+// ============================================================================
+// INTERNAL QUERIES
+// ============================================================================
+
+export const listMembersByOrgInternal = internalQuery({
+  args: { orgId: v.id("organizations") },
+  returns: v.array(v.object({ userId: v.string() })),
+  handler: async (ctx, args) => {
+    const members = await ctx.db
+      .query("orgMembers")
+      .withIndex("by_org", (q) => q.eq("orgId", args.orgId))
+      .take(1000);
+    return members.map((m) => ({ userId: m.userId }));
   },
 });
 
