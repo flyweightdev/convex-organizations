@@ -114,7 +114,7 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
     async afterUserCreatedOrUpdated(ctx, args) {
       await baseCallbacks.afterUserCreatedOrUpdated(ctx, {
         userId: args.userId,
-        existingUserId: args.existingUserId ?? undefined,
+        existingUserId: args.existingUserId,
         profile: {
           email: args.profile?.email as string | undefined,
           phone: args.profile?.phone as string | undefined,
