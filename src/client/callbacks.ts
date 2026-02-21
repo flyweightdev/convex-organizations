@@ -70,12 +70,13 @@ export function createAuthCallbacks(
       ctx: any,
       args: {
         userId: string;
-        existingUserId?: string;
+        existingUserId: string | null;
         profile?: {
           email?: string;
           phone?: string;
           name?: string;
         };
+        [key: string]: unknown;
       },
     ) {
       const userId = args.existingUserId ?? args.userId;
