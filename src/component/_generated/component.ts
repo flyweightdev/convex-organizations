@@ -431,6 +431,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         }>,
         Name
       >;
+      listMembersByOrgInternal: FunctionReference<
+        "query",
+        "internal",
+        { orgId: string },
+        Array<{ userId: string }>,
+        Name
+      >;
       listPlatformAuditLogs: FunctionReference<
         "query",
         "internal",

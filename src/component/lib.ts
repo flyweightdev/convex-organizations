@@ -2406,7 +2406,7 @@ export const transferOwnership = mutation({
 // INTERNAL QUERIES
 // ============================================================================
 
-export const listMembersByOrgInternal = internalQuery({
+export const listMembersByOrgInternal = query({
   args: { orgId: v.id("organizations") },
   returns: v.array(v.object({ userId: v.string() })),
   handler: async (ctx, args) => {
