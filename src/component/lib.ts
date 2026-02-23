@@ -23,8 +23,7 @@ import {
 
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-const INVITATION_CODE_CHARS =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+const INVITATION_CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
 function generateInvitationCode(): string {
   const bytes = new Uint8Array(8);
@@ -1592,9 +1591,10 @@ export const getInvitationCodeByCode = query({
     v.null(),
   ),
   handler: async (ctx, args) => {
+    const code = args.code.toUpperCase();
     const invitationCode = await ctx.db
       .query("invitationCodes")
-      .withIndex("by_code", (q) => q.eq("code", args.code))
+      .withIndex("by_code", (q) => q.eq("code", code))
       .first();
     if (!invitationCode) return null;
 
@@ -1627,9 +1627,10 @@ export const redeemInvitationCode = mutation({
     memberId: v.string(),
   }),
   handler: async (ctx, args) => {
+    const code = args.code.toUpperCase();
     const invitationCode = await ctx.db
       .query("invitationCodes")
-      .withIndex("by_code", (q) => q.eq("code", args.code))
+      .withIndex("by_code", (q) => q.eq("code", code))
       .first();
     if (!invitationCode) {
       throw new Error("Invitation code not found");
