@@ -22,6 +22,18 @@ import {
 } from "./helpers.js";
 
 const RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+const INVITATION_CODE_CHARS =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+function generateInvitationCode(): string {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((b) => INVITATION_CODE_CHARS[b % INVITATION_CODE_CHARS.length])
+    .join("");
+}
+
 // ============================================================================
 // USER PROFILES
 // ============================================================================
@@ -1435,6 +1447,332 @@ export const declineInvitation = mutation({
 });
 
 // ============================================================================
+// INVITATION CODES
+// ============================================================================
+
+export const createInvitationCode = mutation({
+  args: {
+    userId: v.string(),
+    orgId: v.string(),
+    roleId: v.string(),
+    maxRedemptions: v.optional(v.number()),
+    expiresAt: v.optional(v.number()),
+  },
+  returns: v.object({
+    _id: v.string(),
+    code: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const orgId = args.orgId as Id<"organizations">;
+    await requirePermission(ctx, orgId, args.userId, "invitationCode:create");
+    await requireOrg(ctx, orgId);
+
+    const roleId = args.roleId as Id<"orgRoles">;
+    const role = await ctx.db.get(roleId);
+    if (!role || role.orgId !== orgId) {
+      throw new Error("Role not found in this organization");
+    }
+
+    // Generate unique code with retry
+    let code = "";
+    let attempts = 0;
+    do {
+      code = generateInvitationCode();
+      const existing = await ctx.db
+        .query("invitationCodes")
+        .withIndex("by_code", (q) => q.eq("code", code))
+        .first();
+      if (!existing) break;
+      attempts++;
+    } while (attempts < 5);
+    if (attempts >= 5) {
+      throw new Error("Failed to generate unique invitation code");
+    }
+
+    const id = await ctx.db.insert("invitationCodes", {
+      orgId,
+      code,
+      roleId,
+      createdBy: args.userId,
+      maxRedemptions: args.maxRedemptions,
+      redemptionCount: 0,
+      expiresAt: args.expiresAt,
+      status: "active",
+    });
+
+    await writeAuditLog(ctx, {
+      orgId,
+      actorUserId: args.userId,
+      action: "invitationCode.created",
+      resourceType: "invitationCode",
+      resourceId: id as string,
+      metadata: { code, role: role.name, maxRedemptions: args.maxRedemptions },
+    });
+
+    return { _id: id as string, code };
+  },
+});
+
+export const listInvitationCodes = query({
+  args: {
+    userId: v.string(),
+    orgId: v.string(),
+    status: v.optional(v.string()),
+  },
+  returns: v.array(
+    v.object({
+      _id: v.string(),
+      code: v.string(),
+      createdBy: v.string(),
+      maxRedemptions: v.optional(v.number()),
+      redemptionCount: v.number(),
+      expiresAt: v.optional(v.number()),
+      status: v.string(),
+      role: v.object({
+        _id: v.string(),
+        name: v.string(),
+      }),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const orgId = args.orgId as Id<"organizations">;
+    await requirePermission(ctx, orgId, args.userId, "invitationCode:read");
+
+    let codes;
+    if (args.status) {
+      codes = await ctx.db
+        .query("invitationCodes")
+        .withIndex("by_org_status", (q) =>
+          q
+            .eq("orgId", orgId)
+            .eq("status", args.status as "active" | "revoked"),
+        )
+        .take(500);
+    } else {
+      codes = await ctx.db
+        .query("invitationCodes")
+        .withIndex("by_org", (q) => q.eq("orgId", orgId))
+        .take(500);
+    }
+
+    const results = [];
+    for (const ic of codes) {
+      const role = await ctx.db.get(ic.roleId);
+      results.push({
+        _id: ic._id as string,
+        code: ic.code,
+        createdBy: ic.createdBy,
+        maxRedemptions: ic.maxRedemptions,
+        redemptionCount: ic.redemptionCount,
+        expiresAt: ic.expiresAt,
+        status: ic.status,
+        role: role
+          ? { _id: role._id as string, name: role.name }
+          : { _id: "", name: "unknown" },
+      });
+    }
+    return results;
+  },
+});
+
+export const getInvitationCodeByCode = query({
+  args: { code: v.string() },
+  returns: v.union(
+    v.object({
+      _id: v.string(),
+      orgId: v.string(),
+      orgName: v.string(),
+      orgSlug: v.string(),
+      status: v.string(),
+      roleName: v.string(),
+      maxRedemptions: v.optional(v.number()),
+      redemptionCount: v.number(),
+      expiresAt: v.optional(v.number()),
+    }),
+    v.null(),
+  ),
+  handler: async (ctx, args) => {
+    const invitationCode = await ctx.db
+      .query("invitationCodes")
+      .withIndex("by_code", (q) => q.eq("code", args.code))
+      .first();
+    if (!invitationCode) return null;
+
+    const org = await ctx.db.get(invitationCode.orgId);
+    if (!org || org.status === "deleted") return null;
+
+    const role = await ctx.db.get(invitationCode.roleId);
+
+    return {
+      _id: invitationCode._id as string,
+      orgId: invitationCode.orgId as string,
+      orgName: org.name,
+      orgSlug: org.slug,
+      status: invitationCode.status,
+      roleName: role?.name ?? "unknown",
+      maxRedemptions: invitationCode.maxRedemptions,
+      redemptionCount: invitationCode.redemptionCount,
+      expiresAt: invitationCode.expiresAt,
+    };
+  },
+});
+
+export const redeemInvitationCode = mutation({
+  args: {
+    userId: v.string(),
+    code: v.string(),
+  },
+  returns: v.object({
+    orgId: v.string(),
+    memberId: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const invitationCode = await ctx.db
+      .query("invitationCodes")
+      .withIndex("by_code", (q) => q.eq("code", args.code))
+      .first();
+    if (!invitationCode) {
+      throw new Error("Invitation code not found");
+    }
+
+    if (invitationCode.status !== "active") {
+      throw new Error("Invitation code has been revoked");
+    }
+
+    if (
+      invitationCode.expiresAt !== undefined &&
+      invitationCode.expiresAt < Date.now()
+    ) {
+      throw new Error("Invitation code has expired");
+    }
+
+    if (
+      invitationCode.maxRedemptions !== undefined &&
+      invitationCode.redemptionCount >= invitationCode.maxRedemptions
+    ) {
+      throw new Error("Invitation code has reached its maximum redemptions");
+    }
+
+    const org = await ctx.db.get(invitationCode.orgId);
+    if (!org || org.status === "deleted") {
+      throw new Error("Organization not found");
+    }
+
+    const role = await ctx.db.get(invitationCode.roleId);
+    if (!role || role.orgId !== invitationCode.orgId) {
+      throw new Error(
+        "The role for this invitation code no longer exists. Please request a new code.",
+      );
+    }
+
+    const existing = await getMembership(
+      ctx,
+      invitationCode.orgId,
+      args.userId,
+    );
+    if (existing) {
+      throw new Error("Already a member of this organization");
+    }
+
+    const memberId = await ctx.db.insert("orgMembers", {
+      orgId: invitationCode.orgId,
+      userId: args.userId,
+      roleId: invitationCode.roleId,
+      joinedAt: Date.now(),
+      invitedBy: invitationCode.createdBy,
+    });
+
+    await ctx.db.patch(invitationCode._id, {
+      redemptionCount: invitationCode.redemptionCount + 1,
+    });
+
+    await writeAuditLog(ctx, {
+      orgId: invitationCode.orgId,
+      actorUserId: args.userId,
+      action: "invitationCode.redeemed",
+      resourceType: "invitationCode",
+      resourceId: invitationCode._id as string,
+      metadata: { code: invitationCode.code },
+    });
+
+    await writeAuditLog(ctx, {
+      orgId: invitationCode.orgId,
+      actorUserId: args.userId,
+      action: "member.added",
+      resourceType: "member",
+      resourceId: memberId as string,
+      metadata: { viaInvitationCode: invitationCode._id as string },
+    });
+
+    return {
+      orgId: invitationCode.orgId as string,
+      memberId: memberId as string,
+    };
+  },
+});
+
+export const revokeInvitationCode = mutation({
+  args: {
+    userId: v.string(),
+    invitationCodeId: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const invitationCodeId = args.invitationCodeId as Id<"invitationCodes">;
+    const invitationCode = await ctx.db.get(invitationCodeId);
+    if (!invitationCode) {
+      throw new Error("Invitation code not found");
+    }
+
+    await requirePermission(
+      ctx,
+      invitationCode.orgId,
+      args.userId,
+      "invitationCode:manage",
+    );
+
+    if (invitationCode.status !== "active") {
+      throw new Error("Invitation code is already revoked");
+    }
+
+    await ctx.db.patch(invitationCodeId, {
+      status: "revoked",
+      revokedAt: Date.now(),
+    });
+
+    await writeAuditLog(ctx, {
+      orgId: invitationCode.orgId,
+      actorUserId: args.userId,
+      action: "invitationCode.revoked",
+      resourceType: "invitationCode",
+      resourceId: invitationCodeId as string,
+    });
+    return null;
+  },
+});
+
+export const purgeRevokedInvitationCodes = internalMutation({
+  args: {},
+  returns: v.number(),
+  handler: async (ctx) => {
+    const cutoff = Date.now() - RETENTION_MS;
+
+    const codes = await ctx.db
+      .query("invitationCodes")
+      .withIndex("by_status_revokedAt", (q) =>
+        q.eq("status", "revoked").gt("revokedAt", 0).lte("revokedAt", cutoff),
+      )
+      .take(50);
+
+    for (const code of codes) {
+      await ctx.db.delete(code._id);
+    }
+
+    return codes.length;
+  },
+});
+
+// ============================================================================
 // DEVICES
 // ============================================================================
 
@@ -2526,6 +2864,15 @@ export const purgeDeletedOrgs = internalMutation({
         .collect();
       for (const inv of invitations) {
         await ctx.db.delete(inv._id);
+      }
+
+      // Delete all invitation codes
+      const invitationCodes = await ctx.db
+        .query("invitationCodes")
+        .withIndex("by_org", (q) => q.eq("orgId", org._id))
+        .collect();
+      for (const ic of invitationCodes) {
+        await ctx.db.delete(ic._id);
       }
 
       // Delete audit logs for this org

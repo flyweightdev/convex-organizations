@@ -74,6 +74,22 @@ export default defineSchema({
     .index("by_invitedBy", ["invitedBy"])
     .index("by_acceptedBy", ["acceptedBy"]),
 
+  invitationCodes: defineTable({
+    orgId: v.id("organizations"),
+    code: v.string(),
+    roleId: v.id("orgRoles"),
+    createdBy: v.string(),
+    maxRedemptions: v.optional(v.number()),
+    redemptionCount: v.number(),
+    expiresAt: v.optional(v.number()),
+    status: v.union(v.literal("active"), v.literal("revoked")),
+    revokedAt: v.optional(v.number()),
+  })
+    .index("by_org", ["orgId"])
+    .index("by_code", ["code"])
+    .index("by_org_status", ["orgId", "status"])
+    .index("by_status_revokedAt", ["status", "revokedAt"]),
+
   userProfiles: defineTable({
     userId: v.string(),
     email: v.optional(v.string()),

@@ -598,6 +598,117 @@ export function createUserOrgAPI(component: any, config: UserOrgConfig) {
     }),
 
     // =====================================================================
+    // INVITATION CODES
+    // =====================================================================
+
+    createInvitationCode: mutationGeneric({
+      args: {
+        orgId: v.string(),
+        roleId: v.string(),
+        maxRedemptions: v.optional(v.number()),
+        expiresAt: v.optional(v.number()),
+      },
+      returns: v.object({
+        _id: v.string(),
+        code: v.string(),
+      }),
+      handler: async (ctx: any, args: any) => {
+        const userId = await getAuthUserId(ctx);
+        await checkBan(ctx, userId);
+
+        return await ctx.runMutation(component.lib.createInvitationCode, {
+          userId,
+          orgId: args.orgId,
+          roleId: args.roleId,
+          maxRedemptions: args.maxRedemptions,
+          expiresAt: args.expiresAt,
+        });
+      },
+    }),
+
+    listInvitationCodes: queryGeneric({
+      args: {
+        orgId: v.string(),
+        status: v.optional(v.string()),
+      },
+      returns: v.array(
+        v.object({
+          _id: v.string(),
+          code: v.string(),
+          createdBy: v.string(),
+          maxRedemptions: v.optional(v.number()),
+          redemptionCount: v.number(),
+          expiresAt: v.optional(v.number()),
+          status: v.string(),
+          role: v.object({
+            _id: v.string(),
+            name: v.string(),
+          }),
+        }),
+      ),
+      handler: async (ctx: any, args: any) => {
+        const userId = await getAuthUserId(ctx);
+        const { effectiveUserId } = await resolveEffectiveUserId(ctx, userId);
+        return await ctx.runQuery(component.lib.listInvitationCodes, {
+          userId: effectiveUserId,
+          ...args,
+        });
+      },
+    }),
+
+    getInvitationCodeByCode: queryGeneric({
+      args: { code: v.string() },
+      returns: v.union(
+        v.object({
+          _id: v.string(),
+          orgId: v.string(),
+          orgName: v.string(),
+          orgSlug: v.string(),
+          status: v.string(),
+          roleName: v.string(),
+          maxRedemptions: v.optional(v.number()),
+          redemptionCount: v.number(),
+          expiresAt: v.optional(v.number()),
+        }),
+        v.null(),
+      ),
+      handler: async (ctx: any, args: any) => {
+        return await ctx.runQuery(component.lib.getInvitationCodeByCode, {
+          code: args.code,
+        });
+      },
+    }),
+
+    redeemInvitationCode: mutationGeneric({
+      args: { code: v.string() },
+      returns: v.object({
+        orgId: v.string(),
+        memberId: v.string(),
+      }),
+      handler: async (ctx: any, args: any) => {
+        const userId = await getAuthUserId(ctx);
+        await checkBan(ctx, userId);
+        return await ctx.runMutation(component.lib.redeemInvitationCode, {
+          userId,
+          code: args.code,
+        });
+      },
+    }),
+
+    revokeInvitationCode: mutationGeneric({
+      args: { invitationCodeId: v.string() },
+      returns: v.null(),
+      handler: async (ctx: any, args: any) => {
+        const userId = await getAuthUserId(ctx);
+        await checkBan(ctx, userId);
+        return await ctx.runMutation(component.lib.revokeInvitationCode, {
+          userId,
+          invitationCodeId: args.invitationCodeId,
+        });
+      },
+    }),
+
+    // =====================================================================
     // DEVICES
     // =====================================================================
 
