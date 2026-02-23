@@ -60,6 +60,19 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         string,
         Name
       >;
+      createInvitationCode: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          expiresAt?: number;
+          maxRedemptions?: number;
+          orgId: string;
+          roleId: string;
+          userId: string;
+        },
+        { _id: string; code: string },
+        Name
+      >;
       createOrg: FunctionReference<
         "mutation",
         "internal",
@@ -154,6 +167,23 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           orgName: string;
           orgSlug: string;
           phone?: string;
+          roleName: string;
+          status: string;
+        } | null,
+        Name
+      >;
+      getInvitationCodeByCode: FunctionReference<
+        "query",
+        "internal",
+        { code: string },
+        {
+          _id: string;
+          expiresAt?: number;
+          maxRedemptions?: number;
+          orgId: string;
+          orgName: string;
+          orgSlug: string;
+          redemptionCount: number;
           roleName: string;
           status: string;
         } | null,
@@ -391,6 +421,22 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         }>,
         Name
       >;
+      listInvitationCodes: FunctionReference<
+        "query",
+        "internal",
+        { orgId: string; status?: string; userId: string },
+        Array<{
+          _id: string;
+          code: string;
+          createdBy: string;
+          expiresAt?: number;
+          maxRedemptions?: number;
+          redemptionCount: number;
+          role: { _id: string; name: string };
+          status: string;
+        }>,
+        Name
+      >;
       listInvitations: FunctionReference<
         "query",
         "internal",
@@ -489,6 +535,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         }>,
         Name
       >;
+      redeemInvitationCode: FunctionReference<
+        "mutation",
+        "internal",
+        { code: string; userId: string },
+        { memberId: string; orgId: string },
+        Name
+      >;
       registerDevice: FunctionReference<
         "mutation",
         "internal",
@@ -529,6 +582,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         "mutation",
         "internal",
         { invitationId: string; userId: string },
+        null,
+        Name
+      >;
+      revokeInvitationCode: FunctionReference<
+        "mutation",
+        "internal",
+        { invitationCodeId: string; userId: string },
         null,
         Name
       >;
