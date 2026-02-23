@@ -20,6 +20,7 @@ The result: install one package, register the component, export a few functions,
 - **Role-Based Access Control** — Per-org roles defined in a table with granular `resource:action` permissions. System roles seeded from config, custom roles created at runtime. Role hierarchy enforcement (can't promote above yourself)
 - **Members** — Invite, list, update roles, remove. Role hierarchy checks on every operation
 - **Invitations** — Email or phone invitations with cryptographic tokens, expiry, accept/decline flow. Auto-accept on signup
+- **Invitation Codes** — Reusable, shareable codes for multi-user org joins. Server-generated, with optional max redemptions and expiration. Soft-revoke with auto-purge
 - **User Profiles** — Synced from auth on login. Display name, avatar, metadata, active org tracking
 - **Device Management** — Track sessions with parsed user-agent info. Users can view and revoke their own devices
 - **Audit Logging** — Every mutation produces an audit entry with actor, effective user (for impersonation), resource, and metadata
@@ -135,10 +136,10 @@ Create `convex/userOrg.ts`:
 import { createUserOrgAPI } from "@flyweightdev/convex-organizations";
 import { components } from "./_generated/api";
 
-export const { getMyProfile, updateMyProfile, setActiveOrg, createOrg, getOrg, getOrgBySlug, updateOrg, deleteOrg, listMyOrgs, listRoles, createRole, updateRole, deleteRole, listMembers, getMyMembership, updateMemberRole, removeMember, leaveOrg, createInvitation, listInvitations, revokeInvitation, getInvitationByToken, acceptInvitation, declineInvitation, getCurrentSessionId, registerDevice, listMyDevices, removeDevice, removeAllOtherDevices, checkPermission, listAuditLogs } = createUserOrgAPI(components.userOrg, {
+export const { getMyProfile, updateMyProfile, setActiveOrg, createOrg, getOrg, getOrgBySlug, updateOrg, deleteOrg, listMyOrgs, listRoles, createRole, updateRole, deleteRole, listMembers, getMyMembership, updateMemberRole, removeMember, leaveOrg, createInvitation, listInvitations, revokeInvitation, getInvitationByToken, acceptInvitation, declineInvitation, createInvitationCode, listInvitationCodes, getInvitationCodeByCode, redeemInvitationCode, revokeInvitationCode, getCurrentSessionId, registerDevice, listMyDevices, removeDevice, removeAllOtherDevices, checkPermission, listAuditLogs } = createUserOrgAPI(components.userOrg, {
   roles: [
     { name: "owner", permissions: ["*"], sortOrder: 0, isSystem: true },
-    { name: "admin", permissions: ["org:read", "org:write", "member:read", "member:invite", "member:manage", "member:remove", "role:read", "role:manage", "invitation:read", "invitation:manage", "audit:read"], sortOrder: 10, isSystem: true },
+    { name: "admin", permissions: ["org:read", "org:write", "member:read", "member:invite", "member:manage", "member:remove", "role:read", "role:manage", "invitation:read", "invitation:manage", "invitationCode:create", "invitationCode:read", "invitationCode:manage", "audit:read"], sortOrder: 10, isSystem: true },
     { name: "member", permissions: ["org:read", "member:read", "role:read", "invitation:read"], sortOrder: 20, isSystem: true },
     { name: "viewer", permissions: ["org:read"], sortOrder: 30, isSystem: true },
   ],
@@ -359,9 +360,12 @@ Permissions follow a `resource:action` convention:
 | `member:remove`     | Remove members                        |
 | `role:read`         | View available roles                  |
 | `role:manage`       | Create, update, delete custom roles   |
-| `invitation:read`   | View pending invitations              |
-| `invitation:manage` | Revoke invitations                    |
-| `audit:read`        | View audit logs                       |
+| `invitation:read`          | View pending invitations              |
+| `invitation:manage`        | Revoke invitations                    |
+| `invitationCode:create`   | Create invitation codes               |
+| `invitationCode:read`     | View invitation codes                 |
+| `invitationCode:manage`   | Revoke invitation codes               |
+| `audit:read`               | View audit logs                       |
 
 The wildcard `"*"` grants all permissions (used by the owner role).
 
@@ -410,6 +414,55 @@ const { token } = await createInvitation({
 When a user signs up with a matching email or phone, the auth callbacks automatically accept pending invitations for that user.
 
 Invitations have a configurable expiry (default 7 days) and can be revoked by org admins.
+
+## Invitation Codes
+
+Invitation codes are reusable, shareable codes that let multiple users join an organization. Unlike invitations (which target a specific email/phone), codes can be shared freely — on a website, in a Slack channel, or printed on a flyer.
+
+```typescript
+const createInvitationCode = useCreateInvitationCode();
+
+// Create a code with max 50 redemptions, expires in 30 days
+const { code } = await createInvitationCode({
+  orgId,
+  roleId: memberRoleId,
+  maxRedemptions: 50,
+  expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+});
+// code is an 8-char alphanumeric string like "a3Kx9mBw"
+
+// Create an unlimited, non-expiring code
+const { code } = await createInvitationCode({
+  orgId,
+  roleId: memberRoleId,
+});
+```
+
+Codes are auto-generated server-side (8-char alphanumeric). The component handles creation, listing, and revocation. Your app handles the redemption flow:
+
+1. User enters a code in your app
+2. Your app calls `getInvitationCodeByCode` to preview the org/role (no auth required)
+3. If the user isn't signed in, prompt them to sign up
+4. Once authenticated, call `redeemInvitationCode` to join
+
+```typescript
+// Preview a code (public, no auth required)
+const { invitationCode } = useGetInvitationCodeByCode(codeInput);
+// Returns: { orgName, orgSlug, roleName, maxRedemptions, redemptionCount, expiresAt }
+
+// Redeem a code (requires auth)
+const redeemInvitationCode = useRedeemInvitationCode();
+const { orgId, memberId } = await redeemInvitationCode({ code: codeInput });
+
+// List codes for an org (requires invitationCode:read permission)
+const { invitationCodes } = useInvitationCodes(orgId);
+
+// Revoke a code (requires invitationCode:manage permission)
+const revokeInvitationCode = useRevokeInvitationCode();
+await revokeInvitationCode({ invitationCodeId: code._id });
+```
+
+Revoked codes are soft-deleted and automatically purged after 7 days.
 
 ## Device Management
 
@@ -510,8 +563,11 @@ Platform admins can query cross-org audit logs via `listPlatformAuditLogs`.
 | `invitation.created`    | Invitation sent               |
 | `invitation.accepted`   | Invitation accepted           |
 | `invitation.declined`   | Invitation declined           |
-| `invitation.revoked`    | Invitation revoked            |
-| `role.created`          | Custom role created           |
+| `invitation.revoked`        | Invitation revoked            |
+| `invitationCode.created`   | Invitation code created       |
+| `invitationCode.redeemed`  | Invitation code redeemed      |
+| `invitationCode.revoked`   | Invitation code revoked       |
+| `role.created`              | Custom role created           |
 | `role.updated`          | Role permissions changed      |
 | `role.deleted`          | Custom role deleted           |
 | `device.registered`     | New device registered         |
@@ -550,15 +606,16 @@ A daily cron job permanently removes data past the retention period:
 
 | Cron                            | Schedule           | What It Purges                                                                       |
 | ------------------------------- | ------------------ | ------------------------------------------------------------------------------------ |
-| `purge deleted users`           | Daily at 03:00 UTC | User profiles where `deletedAt` is older than 7 days                                 |
-| `purge deleted orgs`            | Daily at 03:30 UTC | Deleted orgs (+ their roles, memberships, invitations, audit logs) older than 7 days |
-| `expire impersonation sessions` | Hourly             | Active impersonation sessions past their TTL                                         |
+| `purge deleted users`               | Daily at 03:00 UTC | User profiles where `deletedAt` is older than 7 days                                                    |
+| `purge deleted orgs`                | Daily at 03:30 UTC | Deleted orgs (+ their roles, memberships, invitations, invitation codes, audit logs) older than 7 days |
+| `purge revoked invitation codes`    | Daily at 03:45 UTC | Invitation codes where `revokedAt` is older than 7 days                                                 |
+| `expire impersonation sessions`     | Hourly             | Active impersonation sessions past their TTL                                                             |
 
 ### What Gets Purged
 
 When a **user** is purged: the profile record is permanently deleted.
 
-When an **org** is purged: the organization record, all its roles, remaining memberships, invitations, and associated audit logs are permanently deleted.
+When an **org** is purged: the organization record, all its roles, remaining memberships, invitations, invitation codes, and associated audit logs are permanently deleted.
 
 ## Admin and Impersonation
 
@@ -672,6 +729,11 @@ All hooks are headless (no UI components) and work on both web and React Native.
 | `useRevokeInvitation()`         | Mutation to revoke an invitation                                                       |
 | `useAcceptInvitation()`         | Mutation to accept an invitation                                                       |
 | `useDeclineInvitation()`        | Mutation to decline an invitation                                                      |
+| `useInvitationCodes(orgId)`     | `{ invitationCodes, isLoading }`                                                       |
+| `useCreateInvitationCode()`     | Mutation to create an invitation code                                                  |
+| `useRevokeInvitationCode()`     | Mutation to revoke an invitation code                                                  |
+| `useGetInvitationCodeByCode(code)` | `{ invitationCode, isLoading }` — public lookup, no auth required                   |
+| `useRedeemInvitationCode()`     | Mutation to redeem an invitation code and join the org                                  |
 | `useCurrentSessionId()`         | Current session ID (string or null)                                                    |
 | `useDevices()`                  | `{ devices, currentDevice, isLoading }` — `currentDevice` auto-resolved via session ID |
 | `useRemoveDevice()`             | Mutation to revoke a device (returns `sessionId` for host-side invalidation)           |
@@ -729,6 +791,20 @@ The component creates these tables in its own isolated namespace (separate from 
 | `status`    | string  | `"pending"`, `"accepted"`, `"declined"`, `"expired"`, `"revoked"` |
 | `token`     | string  | Hashed cryptographic token                                        |
 | `expiresAt` | number  | Expiry timestamp                                                  |
+
+### invitationCodes
+
+| Field             | Type    | Description                                  |
+| ----------------- | ------- | -------------------------------------------- |
+| `orgId`           | id      | Organization reference                       |
+| `code`            | string  | Auto-generated 8-char alphanumeric code      |
+| `roleId`          | id      | Role to assign on redemption                 |
+| `createdBy`       | string  | userId who created the code                  |
+| `maxRedemptions`  | number? | Max uses (omit for unlimited)                |
+| `redemptionCount` | number  | Current number of redemptions                |
+| `expiresAt`       | number? | Expiry timestamp (omit for no expiration)    |
+| `status`          | string  | `"active"` or `"revoked"`                    |
+| `revokedAt`       | number? | Timestamp when revoked (for retention purge) |
 
 ### userProfiles
 

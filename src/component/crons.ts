@@ -21,4 +21,10 @@ crons.hourly(
   internal.lib.expireImpersonationSessions,
 );
 
+crons.daily(
+  "purge revoked invitation codes",
+  { hourUTC: 3, minuteUTC: 45 },
+  internal.lib.purgeRevokedInvitationCodes,
+);
+
 export default crons;

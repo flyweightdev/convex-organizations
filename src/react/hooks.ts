@@ -186,6 +186,51 @@ export function useDeclineInvitation() {
 }
 
 // ============================================================================
+// INVITATION CODES
+// ============================================================================
+
+export function useInvitationCodes(orgId: string | undefined) {
+  const { api } = useUserOrgContext();
+  const invitationCodes = useQuery(
+    api.listInvitationCodes,
+    orgId ? { orgId } : "skip",
+  );
+
+  return {
+    invitationCodes: invitationCodes ?? [],
+    isLoading: invitationCodes === undefined,
+  };
+}
+
+export function useCreateInvitationCode() {
+  const { api } = useUserOrgContext();
+  return useMutation(api.createInvitationCode);
+}
+
+export function useRevokeInvitationCode() {
+  const { api } = useUserOrgContext();
+  return useMutation(api.revokeInvitationCode);
+}
+
+export function useGetInvitationCodeByCode(code: string | undefined) {
+  const { api } = useUserOrgContext();
+  const result = useQuery(
+    api.getInvitationCodeByCode,
+    code ? { code } : "skip",
+  );
+
+  return {
+    invitationCode: result ?? null,
+    isLoading: result === undefined,
+  };
+}
+
+export function useRedeemInvitationCode() {
+  const { api } = useUserOrgContext();
+  return useMutation(api.redeemInvitationCode);
+}
+
+// ============================================================================
 // DEVICES
 // ============================================================================
 
