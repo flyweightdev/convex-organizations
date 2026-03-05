@@ -50,6 +50,8 @@ export interface AdminApi {
   getOrgDetail: FunctionReference<"query", "public">;
   forceRemoveMember: FunctionReference<"mutation", "public">;
   transferOwnership: FunctionReference<"mutation", "public">;
+  isPlatformAdmin: FunctionReference<"query", "public">;
+  adminListRoles: FunctionReference<"query", "public">;
   startImpersonation: FunctionReference<"mutation", "public">;
   stopImpersonation: FunctionReference<"mutation", "public">;
   getActiveImpersonation: FunctionReference<"query", "public">;

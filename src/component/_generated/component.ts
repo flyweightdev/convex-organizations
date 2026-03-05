@@ -31,6 +31,20 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
         { memberId: string; orgId: string },
         Name
       >;
+      adminListRoles: FunctionReference<
+        "query",
+        "internal",
+        { actorUserId: string; limit?: number; orgId: string },
+        Array<{
+          _id: string;
+          description?: string;
+          isSystem: boolean;
+          name: string;
+          permissions: Array<string>;
+          sortOrder: number;
+        }>,
+        Name
+      >;
       banUser: FunctionReference<
         "mutation",
         "internal",
@@ -323,6 +337,13 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           phone?: string;
           userId: string;
         } | null,
+        Name
+      >;
+      isPlatformAdmin: FunctionReference<
+        "query",
+        "internal",
+        { userId: string },
+        boolean,
         Name
       >;
       leaveOrg: FunctionReference<

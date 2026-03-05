@@ -256,6 +256,46 @@ export function createAdminAPI(
     }),
 
     // =====================================================================
+    // PLATFORM ADMIN CHECKS
+    // =====================================================================
+
+    isPlatformAdmin: queryGeneric({
+      args: {},
+      returns: v.boolean(),
+      handler: async (ctx: any) => {
+        const actorUserId = await getAuthUserId(ctx);
+        return await ctx.runQuery(component.lib.isPlatformAdmin, {
+          userId: actorUserId,
+        });
+      },
+    }),
+
+    adminListRoles: queryGeneric({
+      args: {
+        orgId: v.string(),
+        limit: v.optional(v.number()),
+      },
+      returns: v.array(
+        v.object({
+          _id: v.string(),
+          name: v.string(),
+          description: v.optional(v.string()),
+          permissions: v.array(v.string()),
+          isSystem: v.boolean(),
+          sortOrder: v.number(),
+        }),
+      ),
+      handler: async (ctx: any, args: any) => {
+        const actorUserId = await getAuthUserId(ctx);
+        return await ctx.runQuery(component.lib.adminListRoles, {
+          actorUserId,
+          orgId: args.orgId,
+          limit: args.limit,
+        });
+      },
+    }),
+
+    // =====================================================================
     // IMPERSONATION
     // =====================================================================
 
