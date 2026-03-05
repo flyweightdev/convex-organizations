@@ -2741,6 +2741,50 @@ export const transferOwnership = mutation({
   },
 });
 
+export const isPlatformAdmin = query({
+  args: { userId: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const profile = await getProfile(ctx, args.userId);
+    return profile?.isAdmin === true;
+  },
+});
+
+export const adminListRoles = query({
+  args: {
+    actorUserId: v.string(),
+    orgId: v.string(),
+    limit: v.optional(v.number()),
+  },
+  returns: v.array(
+    v.object({
+      _id: v.string(),
+      name: v.string(),
+      description: v.optional(v.string()),
+      permissions: v.array(v.string()),
+      isSystem: v.boolean(),
+      sortOrder: v.number(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx, args.actorUserId);
+    const orgId = args.orgId as Id<"organizations">;
+    const limit = Math.min(Math.max(args.limit ?? 100, 1), 500);
+    const roles = await ctx.db
+      .query("orgRoles")
+      .withIndex("by_org", (q) => q.eq("orgId", orgId))
+      .take(limit);
+    return roles.map((r) => ({
+      _id: r._id as string,
+      name: r.name,
+      description: r.description,
+      permissions: r.permissions,
+      isSystem: r.isSystem,
+      sortOrder: r.sortOrder,
+    }));
+  },
+});
+
 // ============================================================================
 // INTERNAL QUERIES
 // ============================================================================

@@ -157,7 +157,7 @@ Create `convex/admin.ts`:
 import { createAdminAPI } from "@flyweightdev/convex-organizations/admin";
 import { components } from "./_generated/api";
 
-export const { listAllUsers, getUserDetail, banUser, unbanUser, setAdmin, deleteUser, listAllOrgs, getOrgDetail, forceRemoveMember, transferOwnership, startImpersonation, stopImpersonation, getActiveImpersonation, listImpersonationHistory, listPlatformAuditLogs } = createAdminAPI(components.userOrg);
+export const { listAllUsers, getUserDetail, banUser, unbanUser, setAdmin, deleteUser, listAllOrgs, getOrgDetail, forceRemoveMember, transferOwnership, isPlatformAdmin, adminListRoles, startImpersonation, stopImpersonation, getActiveImpersonation, listImpersonationHistory, listPlatformAuditLogs } = createAdminAPI(components.userOrg);
 ```
 
 ### 6. Set Up HTTP Routes
@@ -641,7 +641,23 @@ await forceRemoveMember({ orgId, targetUserId });
 
 // Transfer org ownership
 await transferOwnership({ orgId, newOwnerUserId });
+
+// Check if the current user is a platform admin
+const isAdmin = await isPlatformAdmin();
+
+// List roles for any org (no membership required)
+const roles = await adminListRoles({ orgId });
 ```
+
+#### Setting Platform Admins
+
+Platform admins are set directly in the Convex dashboard by updating the user's `userProfiles` row:
+
+1. Open your deployment in the Convex dashboard.
+2. Go to the `userProfiles` table.
+3. Set `isAdmin` to `true` for the user you want to grant platform admin access.
+
+No bootstrap mutation is required.
 
 ### Impersonation
 
